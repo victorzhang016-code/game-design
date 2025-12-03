@@ -1,0 +1,191 @@
+  // 反制选择 - 修复版
+  const handleCounterChoice = (card: SkillCardData) => {
+    if (phase !== 'counter-choice') return;
+    if (!pendingSkill) return;
+    
+    // 检查是否触发反制（包括通用反制卡）
+    const isCounter = (card.isUniversalCounter) || (card.counterSkill && card.counterSkill === pendingSkill.name);
+    
+    if (isCounter) {
+      // 反制成功！
+      setCounterSuccess(true);
+      setBattleLog(prev => [...prev, `⚡ COUNTER! You used ${card.name} to block ${pendingSkill.name}!`]);
+      
+      // 1. 先执行卡牌基础效果
+      if (card.type === 'ATTACK') {
+        // 攻击卡：造成伤害
+        const damageReduction = getBossDamageReduction();
+        const actualDamage = Math.floor(card.power * damageReduction);
+        
+        setEnemyHp(currentEnemyHp => {
+          const newEnemyHp = Math.max(0, currentEnemyHp - actualDamage);
+          
+          if (enemyType !== 'BATTLE' && damageReduction < 1.0) {
+            const reducedAmount = card.power - actualDamage;
+            setBattleLog(prev => [...prev, `💥 Dealt ${actualDamage} damage! (${reducedAmount} reduced by armor)`]);
+          } else {
+            setBattleLog(prev => [...prev, `💥 Dealt ${actualDamage} damage!`]);
+          }
+          
+          return newEnemyHp;
+        });
+        
+        setEnemyShake(true);
+        setTimeout(() => setEnemyShake(false), 500);
+      } else if (card.type === 'DEFEND') {
+        // 防御卡：获得护盾
+        setDefenseReady(true);
+        setDefenseAmount(card.power);
+        setBattleLog(prev => [...prev, `🛡️ Gained ${card.power} shield!`]);
+      } else if (card.type === 'HEAL') {
+        // 治疗卡：恢复HP
+        setPlayerHp(currentHp => {
+          const newHp = Math.min(playerMaxHp, currentHp + card.power);
+          const actualHeal = newHp - currentHp;
+          setBattleLog(prev => [...prev, `💚 Healed ${actualHeal} HP!`]);
+          return newHp;
+        });
+        
+        // 检查是否可以清除灼烧状态
+        if (card.removeBurn && isBurning) {
+          setIsBurning(false);
+          setBurnTurns(0);
+          setBattleLog(prev => [...prev, '💊 BURN STATUS CURED!']);
+        }
+      }
+      
+      // 2. 再执行反制特效
+      if (card.counterShield) {
+        // 防火铲反制：额外护盾
+        setDefenseReady(true);
+        setDefenseAmount(prev => prev + card.counterShield);
+        setBattleLog(prev => [...prev, `🛡️ Counter bonus: +${card.counterShield} extra shield!`]);
+      }
+      
+      if (card.counterHeal) {
+        // 沙桶反制：额外治疗
+        setPlayerHp(currentHp => {
+          const healAmount = card.counterHeal || 0;
+          const newHp = Math.min(playerMaxHp, currentHp + healAmount);
+          const actualHeal = newHp - currentHp;
+          setBattleLog(prev => [...prev, `💚 Counter bonus: +${actualHeal} HP!`]);
+          return newHp;
+        });
+      }
+      
+      if (card.counterClearDebuffs) {
+        // 燃烧三角反制：清除所有负面状态
+        if (isBurning) {
+          setIsBurning(false);
+          setBurnTurns(0);
+          setBattleLog(prev => [...prev, `✨ Counter effect: All debuffs cleared!`]);
+        }
+      }
+      
+      if (card.counterDamage) {
+        // 额外伤害（如果存在counterDamage属性）
+        const damageReduction = getBossDamageReduction();
+        const bonusDamage = Math.floor(card.counterDamage * damageReduction);
+        
+        setEnemyHp(currentEnemyHp => {
+          const newEnemyHp = Math.max(0, currentEnemyHp - bonusDamage);
+          setBattleLog(prev => [...prev, `💥 Counter bonus: +${bonusDamage} extra damage!`]);
+          return newEnemyHp;
+        });
+        
+        setEnemyShake(true);
+        setTimeout(() => setEnemyShake(false), 500);
+      }
+      
+      if (card.counterReflect) {
+        // 安全插座反制：反弹伤害
+        const reflectDamage = Math.floor(pendingSkill.damage * card.counterReflect);
+        
+        setEnemyHp(currentEnemyHp => {
+          const newEnemyHp = Math.max(0, currentEnemyHp - reflectDamage);
+          setBattleLog(prev => [...prev, `🔌 Counter effect: Reflected ${reflectDamage} damage! (${Math.floor(card.counterReflect * 100)}% of ${pendingSkill.damage})`]);
+          return newEnemyHp;
+        });
+        
+        setEnemyShake(true);
+        setTimeout(() => setEnemyShake(false), 500);
+      }
+      
+      setBattleLog(prev => [...prev, `✅ Enemy skill prevented!`]);
+      
+      // 清除预告的敌人技能
+      setPendingSkill(null);
+      
+      setTimeout(() => {
+        setCounterSuccess(false);
+      }, 1500);
+      
+      // 检查敌人是否被击败（延迟检查确保状态更新）
+      setTimeout(() => {
+        if (enemyHp <= 0) {
+          setTimeout(() => setPhase('player-won'), 300);
+        } else {
+          // 反制成功后进入敌人回合
+          enemyTurn();
+        }
+      }, 2000);
+    } else {
+      // 没有反制，技能命中！执行技能效果
+      setBattleLog(prev => [...prev, `You used ${card.name}, but couldn't counter the skill!`]);
+      
+      const enemyDamage = pendingSkill.damage;
+      let actualDamage = enemyDamage;
+      
+      // 检查是否有防御值
+      const currentDefense = pendingSkill.currentDefense;
+      
+      if (currentDefense > 0) {
+        // 护盾大幅减少伤害
+        actualDamage = Math.max(0, enemyDamage - currentDefense);
+        setBattleLog(prev => [...prev, `🔥 ${pendingSkill.name}! Enemy deals ${enemyDamage}! You blocked ${Math.min(currentDefense, enemyDamage)} damage!`]);
+        setDefenseReady(false);
+        setDefenseAmount(0);
+        // 即使有护盾也触发震动（表示受击）
+        if (actualDamage > 0) {
+          setPlayerShake(true);
+          setTimeout(() => setPlayerShake(false), 500);
+        }
+      } else {
+        // 应用装备减伤（装备齐全时伤害 * 0.9）
+        if (isFullyEquipped) {
+          actualDamage = Math.floor(enemyDamage * 0.9);
+          const reducedDamage = enemyDamage - actualDamage;
+          setBattleLog(prev => [...prev, `🔥 ${pendingSkill.name}! Deals ${enemyDamage}! Equipment reduced ${reducedDamage} damage! Took ${actualDamage} damage!`]);
+        } else {
+          setBattleLog(prev => [...prev, `🔥 ${pendingSkill.name}! Dealt ${actualDamage} damage!`]);
+        }
+        // 触发玩家受击动画
+        setPlayerShake(true);
+        setTimeout(() => setPlayerShake(false), 500);
+      }
+      
+      // 技能额外效果：有更高几率施加灼烧
+      if (!isBurning && actualDamage > 0) {
+        setIsBurning(true);
+        setBurnTurns(3);
+        setBattleLog(prev => [...prev, '🔥 You are BURNING! Takes 3-5 damage per turn for 3 turns!']);
+      }
+      
+      // 清除pendingSkill
+      setPendingSkill(null);
+      
+      // 使用函数式更新确保获取最新的playerHp值
+      setPlayerHp(currentHp => {
+        const newPlayerHp = Math.max(0, currentHp - actualDamage);
+        
+        // 检查玩家是否被击败
+        if (newPlayerHp <= 0) {
+          setTimeout(() => setPhase('player-lost'), 800);
+        } else {
+          setTimeout(() => setPhase('player-turn'), 1000);
+        }
+        
+        return newPlayerHp;
+      });
+    }
+  };
